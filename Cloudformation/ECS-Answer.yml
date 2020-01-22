@@ -1,0 +1,776 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: ECS for Answer API Gateway
+
+Parameters:
+  EnvPrefixCommon:
+    Type: String
+    Default: 'stage'
+    AllowedValues:
+      - alpha
+      - stage
+      - prod
+      - refactor
+    Description: Common prefix for the Environment you want to create
+  EnvYear:
+    Type: String
+    Default: '20'
+    AllowedValues:
+      - 20
+    Description: '2 Digit year of the environment'
+  AnswerSecrets:
+#    NoEcho: false
+    Description: Secrets string for answer API
+    Type: String
+    Default: 'AQICAHgkiqDDgFgK0SbRDUO4g5Iwd/MsaSvZ4ZRhbS5zMiTNiAEyfljNT+ixdwCaj/29O8qbAAABijCCAYYGCSqGSIb3DQEHBqCCAXcwggFzAgEAMIIBbAYJKoZIhvcNAQcBMB4GCWCGSAFlAwQBLjARBAxCGIrMCX6oECCUXr8CARCAggE9lk8zBa0MvAU+LIDh9q2dRs1xE4vl8MCMo9a0o6m75jV2ivAkYy/i6iqUs7A5/5qZjn1c5Zmi43dwnfj+YJaShi+IDd4y1eX3RtRHzfni6WhlnpVyCcCL2SYevo7A0psfqF0CZ2HcEKEeF+zLSiWNJ/YOaySpEhsQyDZfvryK6YnalglZq1Ak+fOau6c7hTdKxYjhYfz6BJdym5k/oqkbR5cSC6gMA5boCKvjN/NH4y2lST5x4TSL/tLvaQ6rkcS0N+4spfJSbQGZkt7r0LFbiOlbj5mOg73hYquV25dGZWIHdQ13K/P+p1NaxbRFPNHoLuajRgkalgLY284UBnWa0H98Kw2T+Qm3cdb9lrFNM9wa2D295dxdqjMFxR4CfL9G/lVGAcWobI+aRIQQ/chbd0zI0HdNIQMqkg17bwQ='
+  AnswerImage:
+    Description: Tag for Container Registry Image
+    Type: String
+    Default: 'c00e555'
+  Season: 
+    Description: Common application Season
+    Type: String
+    Default: '2020-21'
+    AllowedValues:
+      - '2020-21'
+  AnswerMinCapacity:
+    Description: Minimum Number of Tasks
+    Type: Number
+    Default: 1
+  AnswerDesiredCapacity:
+    Description: Desired Number of Tasks for Answer ECS
+    Type: Number
+    Default: 3
+  MaxCapacity: 
+    Description: Maxiumum Number of Tasks
+    Type: Number
+    Default: 6
+  AnswerCPU:
+    Description: Task CPU Allocation
+    Type: String
+    Default: 512
+    AllowedValues:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+  AnswerMemory:
+    Description: Task Memory Allocation
+    Type: String
+    Default: 1024
+    AllowedValues:
+      - 512
+      - 1024
+      - 2048
+      - 4096
+      - 8192
+  CPUCriticalThreshold:
+    Description: CPU Critical Alarm Threshold (Default = 90)
+    Type: Number
+    Default: 90
+    AllowedValues:
+      - 70
+      - 80
+      - 90
+  IngestLogs:
+    Description: Where should logs be ingested?
+    Type: String
+    Default: None
+    AllowedValues:
+      - None
+      - SumoLogic
+      - ElastiSearch
+      - Both
+  EnvPrefixForAssetCreation:
+    Type: String
+    Default: not-prod
+    AllowedValues:
+      - not-prod
+      - prod
+    Description: Prefix for the Environment you want to create. Used to decide which assets to create
+  Channel:
+    Type: String
+    Default: 'a'
+    Description: Channel for asset creation
+    AllowedValues:
+      - a
+      - b
+  DesktopChannel:
+    Type: String
+    Default: 'donkey'
+    Description: Desktop Channel to reference
+    AllowedValues:
+      - donkey
+      - elephant
+
+
+
+Metadata: 
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Deployment Configuration"
+        Parameters: 
+          - AnswerImage
+      - 
+        Label: 
+          default: "Environment Configuration"
+        Parameters: 
+          - EnvPrefixCommon
+          - EnvYear
+          - EnvPrefixForAssetCreation
+          - Channel
+          - DesktopChannel
+          - Season
+          - AnswerSecrets
+      - 
+        Label: 
+          default: "ECS Capacity Configuration"
+        Parameters: 
+          - AnswerMinCapacity
+          - AnswerDesiredCapacity
+          - MaxCapacity
+          - AnswerCPU
+          - AnswerMemory
+      - 
+        Label: 
+          default: "ECS Logging Configuration"
+        Parameters: 
+          - IngestLogs
+
+Mappings:
+  logARN:
+    prod:
+      'sumoARN': 'arn:aws:lambda:us-west-2:213357028576:function:prod-cloudwatch-log-sumologic'
+      'esARN': 'arn:aws:firehose:us-west-2:213357028576:deliverystream/prod-CentralizedLogs'
+    stage:
+      'sumoARN': 'arn:aws:lambda:us-east-1:213357028576:function:stage-cloudwatch-log-sumologic'
+      'esARN': 'arn:aws:firehose:us-east-1:213357028576:deliverystream/stage-CentralizedLogs'
+
+Conditions:
+  IsProd: !Equals [!Ref EnvPrefixForAssetCreation, prod]
+  Channel: !Equals [!Ref Channel, a]
+  ConfigureLogIngestion: !Equals [ !Ref IngestLogs, true ]
+  SumoLogIngestion: !Or [ !Equals [!Ref IngestLogs, SumoLogic], !Equals [!Ref IngestLogs, Both] ]
+  ESLogIngestion: !Or [ !Equals [!Ref IngestLogs, ElastiSearch], !Equals [!Ref IngestLogs, Both] ]
+  DonkeyActiveChannel: !Equals [!Ref DesktopChannel, donkey]
+
+
+Resources:   
+#========================
+# LOGGING SECTION - START
+#========================
+  CloudWatchLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties: 
+      LogGroupName: !Sub /ecs/${EnvPrefixCommon}${EnvYear}-answer-api-${Channel}
+      RetentionInDays: 60
+      
+  SumoLambdaInvokePermission:
+    Condition: SumoLogIngestion
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !FindInMap [logARN, !Ref EnvPrefixCommon, 'sumoARN']
+      Action: 'lambda:InvokeFunction'
+      Principal: !Sub logs.${AWS::Region}.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt [CloudWatchLogGroup, Arn]
+      
+  SumoSubscriptionFilter: 
+    Condition: SumoLogIngestion
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: SumoLambdaInvokePermission
+    Properties: 
+      LogGroupName: !Ref CloudWatchLogGroup
+      FilterPattern: ""
+      DestinationArn: !FindInMap [logARN, !Ref EnvPrefixCommon, 'sumoARN']
+      
+  ESSubscriptionRole: 
+    Type: "AWS::IAM::Role"
+    Condition: ESLogIngestion
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - !Sub "logs.${AWS::Region}.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      RoleName: !Sub ${EnvPrefixCommon}${EnvYear}.eslog.answer-api-${Channel}
+
+  ESSubscriptionPolicy: 
+    Type: "AWS::IAM::ManagedPolicy"
+    Condition: ESLogIngestion
+    DependsOn: ESSubscriptionRole
+    Properties: 
+      Description: "Policy "
+      Path: "/"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          -
+            Action: 
+              - "firehose:PutRecord"
+            Resource:
+              - !FindInMap [logARN, !Ref EnvPrefixCommon, 'esARN']
+            Effect: "Allow"
+          -
+            Action: 
+              - "iam:PassRoll"
+            Resource:
+              - !GetAtt [ESSubscriptionRole, Arn]
+            Effect: "Allow"
+      ManagedPolicyName: !Sub ca.policy.${EnvPrefixCommon}${EnvYear}.eslog.answer-api-${Channel}
+      Roles: 
+        - Ref: "ESSubscriptionRole"
+  
+  ESSubscriptionFilter: 
+    Condition: ESLogIngestion
+    Type: AWS::Logs::SubscriptionFilter
+    Properties: 
+      LogGroupName: !Ref CloudWatchLogGroup
+      FilterPattern: ""
+      DestinationArn: !FindInMap [logARN, !Ref EnvPrefixCommon, 'esARN']
+      RoleArn: !GetAtt [ESSubscriptionRole, Arn]
+
+#======================
+# LOGGING SECTION - END
+#======================
+
+  # CREATE IAM ROLE AND POLICY FOR LAMBDA FUNCTION
+  AnswerAPIECSRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ecs-tasks.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      RoleName: !Sub ${EnvPrefixCommon}${EnvYear}.ecs-task.answer-api-${Channel}
+      
+  AnswerAPIECSPolicy: 
+    Type: "AWS::IAM::ManagedPolicy"
+    Properties: 
+      Description: "Policy "
+      Path: "/"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Action: 
+              - "kms:Decrypt"
+            Resource:
+              Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}KmsKeyARN
+            Effect: "Allow"
+          - 
+            Action: 
+              - "dynamodb:DeleteItem"
+              - "dynamodb:DescribeTable"
+              - "dynamodb:GetItem"
+              - "dynamodb:PutItem"
+              - "dynamodb:UpdateItem"
+              - "dynamodb:Scan"
+              - "dynamodb:Query"
+              - "dynamodb:BatchGetItem"
+            Resource: 
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${EnvPrefixCommon}${EnvYear}ApplicantScreenStatus
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${EnvPrefixCommon}${EnvYear}DefaultScreenStatus
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${EnvPrefixCommon}${EnvYear}RecFormScreenStatus
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${EnvPrefixCommon}${EnvYear}RecProfileScreenStatus
+            Effect: "Allow"
+          - 
+            Action: 
+              - "xray:PutTraceSegments"
+              - "xray:PutTelemetryRecords"
+            Resource: "*"
+            Effect: "Allow"
+          - Action:
+              - "s3:Get*"
+              - "s3:Put*"
+              - "s3:List*"
+              - "s3:Delete*"
+            Resource:
+              - !Sub arn:aws:s3:::ca.${EnvPrefixCommon}${EnvYear}.upload-temp/*
+              - !Sub arn:aws:s3:::ca.${EnvPrefixCommon}${EnvYear}.upload-temp
+              - !Sub arn:aws:s3:::ca.${EnvPrefixCommon}${EnvYear}.upload-perm/*
+              - !Sub arn:aws:s3:::ca.${EnvPrefixCommon}${EnvYear}.upload-perm
+            Effect: Allow
+      ManagedPolicyName: !Sub ca.policy.${EnvPrefixCommon}${EnvYear}.ecs-answer-api-${Channel}
+      Roles: 
+        - Ref: "AnswerAPIECSRole"
+      
+  Service: 
+    Type: AWS::ECS::Service
+    DependsOn: ListenerRule
+    Properties: 
+      Cluster:
+        Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}ECSClusterName
+      ServiceName: !Sub ${EnvPrefixCommon}${EnvYear}-answer-api-service-${Channel}
+      LaunchType: FARGATE
+      PlatformVersion: 1.3.0
+      DesiredCount: !Ref AnswerDesiredCapacity
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration: 
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      TaskDefinition: !Ref TaskDefinition
+      LoadBalancers: 
+        - ContainerName: !Sub ${EnvPrefixCommon}${EnvYear}-answer-api-container-${Channel}
+          ContainerPort: 80
+          TargetGroupArn: !Ref TargetGroup
+      NetworkConfiguration: 
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}MemberMySQLPrimaryClientsSG
+            - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}MemberCacheBackendClientsSG
+            - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}FilterExternalELBsSG
+            - 
+              !If
+                - DonkeyActiveChannel
+                - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}MemberdonkeyBackendClientsSG
+                - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}MemberelephantBackendClientsSG
+          Subnets:
+            - Fn::ImportValue: !Sub ${EnvPrefixCommon}PrivateServersASubnetID
+            - Fn::ImportValue: !Sub ${EnvPrefixCommon}PrivateServersBSubnetID
+            - Fn::ImportValue: !Sub ${EnvPrefixCommon}PrivateServersCSubnetID
+          
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: !Ref AnswerCPU
+      RequiresCompatibilities: 
+        - FARGATE
+      Family: !Sub ${EnvPrefixCommon}${EnvYear}-answer-api-task-${Channel}
+      NetworkMode: awsvpc
+      ExecutionRoleArn:
+        Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}ECSTaskExecutionRole
+      TaskRoleArn: !Ref AnswerAPIECSRole
+      Memory: !Ref AnswerMemory
+      ContainerDefinitions:
+        - Name: !Sub ${EnvPrefixCommon}${EnvYear}-answer-api-container-${Channel}
+          Essential: true
+          Image: !Sub 572092343279.dkr.ecr.us-east-1.amazonaws.com/alpha${EnvYear}-answer-api:${AnswerImage}
+          PortMappings:
+            - ContainerPort: 80
+          EntryPoint: 
+          - dotnet
+          - CommonApp.Api.Answers.dll
+          WorkingDirectory: /app
+          Ulimits:
+            - Name: nofile
+              HardLimit: 250000
+              SoftLimit: 250000
+          HealthCheck:
+            Command:
+              - CMD-SHELL 
+              - !Sub curl -f http://localhost/answer/heartbeat || exit 1
+            Interval: 30
+            Retries: 3
+            StartPeriod: 30
+            Timeout: 30                   
+          Environment:
+            - Name: Channel
+              Value: !Sub ${Channel}
+            - Name: Tier
+              Value: ecs
+            - Name: AppRuntimeEnvironment
+              Value: !Sub ${EnvPrefixCommon}
+            - Name: AWSRegion
+              Value: !Sub ${AWS::Region}
+            - Name: DynamoDBTablePreFix
+              Value: !Sub ${EnvPrefixCommon}${EnvYear}
+            - Name: Season
+              Value: !Ref Season
+            - Name: secrets
+              Value: !Ref AnswerSecrets
+            - Name: AWSNoOfRetries
+              Value: 5
+            - Name: LogLevel
+              Value: error
+            - Name: RedisDatabaseId
+              Value: 3
+            - Name: RedisPrimary
+              Value:
+                Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}DBCachePrivateDNS
+            - Name: LongExpiration
+              Value: 36
+            - Name: DataCatalogApiBaseURL_Applicant
+              Value: !Join
+                    - ''
+                    - - https://
+                      - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}APIALB${Channel}DNS
+                      - /datacatalog
+            - Name: DataCatalogApiBaseURL_Partner
+              Value: !Join
+                    - ''
+                    - - https://
+                      - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}APIALB${Channel}DNS
+                      - /datacatalog
+            - Name: ApplicantApiBaseURL_Applicant
+              Value: !Join
+                    - ''
+                    - - https://
+                      - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}APIALB${Channel}DNS
+                      - /applicant
+            - Name: RecommenderApiBaseURL_Applicant
+              Value: !Join
+                    - ''
+                    - - https://
+                      - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}APIALB${Channel}DNS
+                      - /recommender
+            - Name: CommonScreenStatusAPIURL
+              Value: /screens/commonapp
+            - Name: MyCollegesAPIURL
+              Value: /mycolleges
+            - Name: BucketTempConvApp
+              Value: !Sub ca.${EnvPrefixCommon}${EnvYear}.upload-temp/converted/app
+            - Name: BucketUploadCommon
+              Value: !Sub ca.${EnvPrefixCommon}${EnvYear}.upload-perm/answers/app/common
+            - Name: BucketUploadMember
+              Value: !Sub ca.${EnvPrefixCommon}${EnvYear}.upload-perm/answers/app/member
+            - Name: BucketUploadRecProfile
+              Value: !Sub ca.${EnvPrefixCommon}${EnvYear}.upload-perm/answers/rec/profile
+            - Name: BucketUploadRecForm
+              Value: !Sub ca.${EnvPrefixCommon}${EnvYear}.upload-perm/answers/rec/form
+            - Name: BucketTempRawApp
+              Value: !Sub ca.${EnvPrefixCommon}${EnvYear}.upload-temp/raw/app
+            - Name: BucketTempRawRec
+              Value: !Sub ca.${EnvPrefixCommon}${EnvYear}.upload-temp/raw/rec
+            - Name: AcceptedUploadFileFormats
+              Value: '.rtf,.docx,.txt,.doc,.pdf'
+            - Name: DCGRuleBySectionAPIURL
+              Value: /sections/{0}/dcgrules
+            - Name: DCGRuleBySectionRecurseAPIURL
+              Value: /sections/{0}/dcgrules/recurse
+            - Name: GetChoiceGroupByIdAPIURL
+              Value: /choicegroups/{0}/choicevalues
+            - Name: QuestionByIdAPIURL
+              Value: /questions/{0}
+            - Name: QuestionsByScreenIdAPIURL
+              Value: /screens/{0}/questions
+            - Name: SectionAPIURL
+              Value: /sections/{0}
+            - Name: ValidationGroupAPIURL
+              Value: /sections/{0}/validationgroup
+            - Name: ValidationGroupByTemplateAPIURL
+              Value: /sections/{0}/validationgroupbyTemplate
+            - Name: ReqRuleBySectionRecurseAPIURL
+              Value: /sections/{0}/reqrules/recurse
+            - Name: ReqGroupByIdAPIURL
+              Value: /reqgroup/{0}
+            - Name: ChoiceValueByChoiceGroupReqRuleIdAPIURL
+              Value: /choicevalues/{0}
+            - Name: ChoiceGroupByImpactQuestionIdAPIURL
+              Value: /choicegroupbyimpact/{0}
+            - Name: ChoiceGroupByTriggerQuestionIdAPIURL
+              Value: /choicegroupbytrigger/{0}
+            - Name: QuestionsBySectionIdAPIURL
+              Value: /sections/{0}/questions
+            - Name: GetSubmissionStatusAPIURL
+              Value: /submit/status
+            - Name: RedisTimeout
+              Value: 10000
+            - Name: GetCollegeDetails
+              Value: /Lookup/CollegeCodes/{0}
+            - Name: GetSchoolCodes
+              Value: /Lookup/SchoolCodes/{0}
+            - Name: MinworkerThreads
+              Value: 16380
+            - Name: IOCPThreads
+              Value: 100
+            - Name: ServiceBaseURL
+              Value: !If
+                - DonkeyActiveChannel
+                - 
+                  !Join
+                    - ''
+                    - - http://
+                      - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}donkeyLogicDNSEndpoint
+                      - /
+                - 
+                  !Join
+                    - ''
+                    - - http://
+                      - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}elephantLogicDNSEdnpoint
+                      - /
+            - Name: RebuildFYCommonScreensDuringSubmission
+              Value: ''
+            - Name: RebuildMemberScreenDuringSubmission
+              Value: true
+            - Name: RebuildWritingSupplementDuringSubmission
+              Value: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+              
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvPrefixCommon}VPCID
+      Port: 80
+      Protocol: HTTP
+      Matcher: 
+        HttpCode: 200-299
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /answer/heartbeat
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 8
+      UnhealthyThresholdCount: 5
+      Name: !Sub ${EnvPrefixCommon}${EnvYear}-answer-api-${Channel}
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: '60'
+      - Key: slow_start.duration_seconds
+        Value: '60'
+      TargetType: ip
+  
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn:
+        Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}APIALBListener${Channel}ARN
+      Priority: 2
+      Conditions:
+          - Field: path-pattern
+            Values: 
+              - !Sub /answer*
+      Actions:
+          - TargetGroupArn: !Ref TargetGroup
+            Type: forward
+                  
+  ServiceScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn: Service
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref AnswerMinCapacity
+      ResourceId: !Join
+        - '/'
+        - - service
+          - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}ECSClusterName
+          - !GetAtt [Service, Name]
+      RoleARN: 
+        Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}ECSAutoscalingRole
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+      
+  ServiceScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyType: TargetTrackingScaling
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 65
+        ScaleInCooldown: 900
+        ScaleOutCooldown: 180
+      PolicyName: ECSServiceAverageCPUUtilization
+      ScalingTargetId: !Ref ServiceScalingTarget
+
+  
+  #CPU WARNING ALARM CREATION FOR ECS SERVICE
+  CPUWarningAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: TaskDefinition
+    Properties:
+      AlarmName: 
+        !Join
+          - ' - '
+          - - ECS Service CPU Warning
+            - !GetAtt [Service, Name]
+      AlarmDescription: Trigger an alarm if CPU reaches warning level
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Dimensions:
+          -
+              Name: ClusterName
+              Value: 
+                Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}ECSClusterName
+          -
+              Name: ServiceName
+              Value: !GetAtt [Service, Name]
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}DevopsAlarmYellowTopicARN
+
+  #MEMORY WARNING ALARM CREATION FOR ECS SERVICE
+  MemoryWarningAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: TaskDefinition
+    Properties:
+      AlarmName: 
+        !Join
+          - ' - '
+          - - ECS Service Memory Warning
+            - !GetAtt [Service, Name]
+      AlarmDescription: Trigger an alarm if memory reaches warning level
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Dimensions:
+          -
+              Name: ClusterName
+              Value: 
+                Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}ECSClusterName
+          -
+              Name: ServiceName
+              Value: !GetAtt [Service, Name]
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}DevopsAlarmYellowTopicARN
+
+  #RESPONSE TIME TARGET GROUP  ALARM CREATION
+  ResponseTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: TaskDefinition
+    Properties:
+      AlarmName: 
+        !Join
+          - ' - '
+          - - Target Group Response Time
+            - !GetAtt [TargetGroup, TargetGroupName]
+      AlarmDescription: Trigger an alarm if response time reaches a threshold
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Dimensions:
+          -
+              Name: TargetGroup
+              Value: !GetAtt [TargetGroup, TargetGroupFullName]
+          -
+              Name: LoadBalancer
+              Value: !Select [1, !Split ["loadbalancer/", !Select [0, !GetAtt [TargetGroup, LoadBalancerArns]]]]
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}DevopsAlarmYellowTopicARN
+
+  #UNHEALTHY HOSTS TARGET GROUP  ALARM CREATION
+  UnhealthyHostsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: TaskDefinition
+    Properties:
+      AlarmName: 
+        !Join
+          - ' - '
+          - - Target Group Unhealthy Hosts
+            - !GetAtt [TargetGroup, TargetGroupName]
+      AlarmDescription: Trigger an alarm if unhealthy host reaches a threshold
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Dimensions:
+          -
+              Name: TargetGroup
+              Value: !GetAtt [TargetGroup, TargetGroupFullName]
+          -
+              Name: LoadBalancer
+              Value: !Select [1, !Split ["loadbalancer/", !Select [0, !GetAtt [TargetGroup, LoadBalancerArns]]]]
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}DevopsAlarmYellowTopicARN
+          
+  #BACKEND ERROR TARGET GROUP  ALARM CREATION
+  BackendErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: TaskDefinition
+    Properties:
+      AlarmName: 
+        !Join
+          - ' - '
+          - - Target Group Backend 5XX Error
+            - !GetAtt [TargetGroup, TargetGroupName]
+      AlarmDescription: Trigger an alarm if backend errors reach a threshold
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Dimensions:
+          -
+              Name: TargetGroup
+              Value: !GetAtt [TargetGroup, TargetGroupFullName]
+          -
+              Name: LoadBalancer
+              Value: !Select [1, !Split ["loadbalancer/", !Select [0, !GetAtt [TargetGroup, LoadBalancerArns]]]]
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 150
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}DevopsAlarmYellowTopicARN
+
+  #PAGERDUTY BACKEND ERROR TARGET GROUP  ALARM CREATION
+  PagerDutyBackendErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: TaskDefinition
+    Condition: IsProd
+    Properties:
+      AlarmName: 
+        !Join
+          - ' - '
+          - - Target Group Backend 5XX Error
+            - !GetAtt [TargetGroup, TargetGroupName]
+            - PD
+      AlarmDescription: Trigger an alarm if backend errors reach a threshold
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Dimensions:
+          -
+              Name: TargetGroup
+              Value: !GetAtt [TargetGroup, TargetGroupFullName]
+          -
+              Name: LoadBalancer
+              Value: !Select [1, !Split ["loadbalancer/", !Select [0, !GetAtt [TargetGroup, LoadBalancerArns]]]]
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${EnvPrefixCommon}${EnvYear}DevopsAlarmRedTopicARN
+
+Outputs:
+  ALBTargetGroupFullName:
+    Description: Answer Target Group Full Name
+    Value: !GetAtt [ TargetGroup, TargetGroupFullName ]
+    Export:
+      Name: !Join
+        - ''
+        - - !Sub ${EnvPrefixCommon}${EnvYear}AnswerTargetGroup
+          - !Sub ${Channel}
+          - 'FullName'
